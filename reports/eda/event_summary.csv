@@ -1,0 +1,7 @@
+﻿event,count
+is_alarm,16
+is_emergency,0
+is_reset,4
+is_spindle_overload,60
+is_abnormal_interval,17
+has_event,97
