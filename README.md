@@ -7,8 +7,10 @@ MCT 설비에서 수집된 원본 로그를 분석 가능한 CSV 형태로 변�
 - 결측치, 중복값, 수집 간격 및 특이값 검증
 - 알람·비상·RESET·과부하·수집 공백 플래그 생성
 - 설비 좌표를 실제 mm 단위로 변환
-- 예지보전 모델링에 사용할 최종 데이터 생성
-- 전처리 및 품질 검증 결과 문서화
+- 최종 분석용 데이터 생성
+- 탐색적 데이터 분석(EDA) 수행
+- 예지보전 모델링에 사용할 데이터 제공
+- 전처리 및 분석 결과 문서화
 
 ## 프로젝트 구조
 
@@ -16,7 +18,7 @@ MCT 설비에서 수집된 원본 로그를 분석 가능한 CSV 형태로 변�
 MCT-Data-Preprocessing/
 ├── data/                         # 원본 로그 저장 폴더
 ├── output/                       # 파싱 및 최종 정제 데이터
-├── reports/                      # 데이터 품질 검증 결과
+├── reports/                      # 데이터 품질 검증 및 EDA 결과
 │   ├── abnormal_intervals.csv
 │   ├── alarm_counts.csv
 │   ├── daily_counts.csv
@@ -24,11 +26,13 @@ MCT-Data-Preprocessing/
 │   ├── machine_counts.csv
 │   ├── missing_counts.csv
 │   ├── numeric_summary.csv
-│   └── status_counts.csv
+│   ├── status_counts.csv
+│   └── eda/                      # EDA 결과 저장 폴더
 ├── src/
 │   ├── parse_mct_log.py          # 원본 로그 파싱
 │   ├── validate_mct_data.py      # 데이터 품질 검증
-│   └── build_clean_dataset.py    # 최종 분석용 데이터 생성
+│   ├── build_clean_dataset.py    # 최종 분석용 데이터 생성
+│   └── eda_mct.py                # 탐색적 데이터 분석
 ├── .gitignore
 └── README.md
 ```
@@ -39,16 +43,18 @@ MCT-Data-Preprocessing/
 - `data/`: 기업에서 제공받은 원본 로그
 - `output/`: 전처리 과정에서 생성된 대용량 결과 데이터
 
-위 폴더의 데이터 파일은 `.gitignore`를 통해 Git 추적에서 제외함. 품질 검증 결과인 `reports/`의 요약 CSV만 저장소에서 관리함.
+위 폴더의 데이터 파일은 `.gitignore`를 통해 Git 추적에서 제외함. 기업 데이터에서 생성된 분석 결과 파일도 필요한 경우 별도로 관리함.
 
 ## 실행 환경
 - Python 3
 - pandas
+- matplotlib
+- seaborn
 
-pandas가 설치되지 않은 경우 다음 명령으로 설치함.
+필요한 라이브러리가 설치되지 않은 경우 다음 명령으로 설치함.
 
 ```powershell
-pip install pandas
+pip install pandas matplotlib seaborn
 ```
 
 ## 실행 방법
@@ -90,6 +96,30 @@ python .\src\build_clean_dataset.py
 output/mct_clean.csv
 ```
 
+### 4. 탐색적 데이터 분석(EDA)
+
+```powershell
+python .\src\eda_mct.py
+```
+
+`mct_clean.csv`를 기준으로 데이터 구조, 결측치, 주요 변수의 분포, 이벤트 발생 현황, 정상·이벤트 구간 비교 및 변수 간 상관관계를 분석함.
+
+생성 결과:
+
+```text
+reports/eda/
+```
+
+주요 결과 파일:
+
+- `basic_info.csv`: 열 자료형 및 결측치 정보
+- `numeric_summary.csv`: 주요 수치형 변수의 기초 통계
+- `event_summary.csv`: 이벤트별 발생 횟수
+- `daily_event_summary.csv`: 날짜별 이벤트 현황
+- `event_comparison.csv`: 정상 구간과 이벤트 구간 비교
+- `correlation.csv`: 수치형 변수 간 상관관계
+- `.png` 파일: 변수 분포, 이벤트 비교 및 상관관계 그래프
+
 ## 품질 검증 결과
 총 481,648행을 검증한 결과는 다음과 같음.
 
@@ -107,7 +137,6 @@ output/mct_clean.csv
 `error_message`는 알람이 없는 481,632행에서 비어 있으며, 이는 오류 메시지가 존재하지 않는 정상적인 결측임. `interval_seconds`는 각 설비의 첫 번째 관측치에서 이전 측정값이 없어 결측으로 기록됨.
 
 ## 처리 원칙
-
 특이값을 임의로 삭제하거나 수정하지 않고 원본 관측치를 보존함. 분석과 모델링에 필요한 변환 열 및 상태 플래그를 최종 데이터에 추가함.
 
 | 열 이름 | 의미 |
@@ -129,6 +158,20 @@ output/mct_clean.csv
 
 X·Y·Z축 부하값은 전체 행에서 동일하지만, 원본 로그 대조 결과에서도 같은 값으로 기록되어 있어 파싱 오류가 아닌 원천 데이터의 특성으로 판단함.
 
+## EDA 수행 범위
+EDA에서는 다음 항목을 확인함.
+
+- 데이터 행·열 구조 및 자료형
+- 열별 결측치 현황
+- 주요 수치형 변수의 최솟값·최댓값·평균·중앙값
+- 알람·비상·RESET·과부하·비정상 수집 간격 발생 현황
+- 날짜별 데이터 및 이벤트 발생 추이
+- 정상 구간과 이벤트 구간의 주요 변수 비교
+- 수치형 변수 간 상관관계
+- 모델 학습에 사용할 수 있는 후보 변수
+
+`has_event`는 실제 고장 여부를 나타내는 정답 라벨이 아니라, 알람·RESET·과부하·수집 공백 등 분석할 필요가 있는 행을 표시하는 보조 플래그임. 따라서 실제 고장 예측 모델을 학습하려면 별도의 고장·정비 이력이 필요함.
+
 ## 진행 상태
 - [v] GitHub 저장소 및 프로젝트 구조 생성
 - [v] 원본 및 결과 데이터 Git 추적 제외
@@ -139,3 +182,7 @@ X·Y·Z축 부하값은 전체 행에서 동일하지만, 원본 로그 대조 �
 - [v] 데이터 품질 검증 보고서 생성
 - [v] 최종 분석용 데이터 생성
 - [v] 전처리 결과 검증
+- [v] EDA 코드 작성
+- [v] 주요 변수 분포 및 이벤트 현황 분석
+- [v] 정상 구간과 이벤트 구간 비교
+- [v] 수치형 변수 상관관계 분석
