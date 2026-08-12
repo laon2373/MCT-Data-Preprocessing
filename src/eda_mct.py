@@ -73,15 +73,22 @@ basic_info.to_csv(
 )
 
 # 2. 수치형 변수 통계 저장
-df[numeric_columns].describe().T.to_csv(
+numeric_summary = df[numeric_columns].describe().T
+numeric_summary.index.name = "feature"
+
+numeric_summary.reset_index().to_csv(
     REPORT_DIR / "numeric_summary.csv",
+    index=False,
     encoding="utf-8-sig",
 )
 
 # 3. 이벤트 발생 건수 저장
 flag_summary = df[flag_columns].sum().rename("count")
-flag_summary.to_csv(
+flag_summary.index.name = "event"
+
+flag_summary.reset_index().to_csv(
     REPORT_DIR / "event_summary.csv",
+    index=False,
     encoding="utf-8-sig",
 )
 
@@ -113,8 +120,29 @@ event_comparison = (
     .agg(["mean", "median", "min", "max"])
 )
 
+event_comparison.columns = [
+    f"{column}_{stat}"
+    for column, stat in event_comparison.columns
+]
+
+event_comparison = event_comparison.reset_index()
+
+event_counts = (
+    df["has_event"]
+    .value_counts()
+    .rename_axis("has_event")
+    .rename("row_count")
+    .reset_index()
+)
+
+event_comparison = event_counts.merge(
+    event_comparison,
+    on="has_event",
+)
+
 event_comparison.to_csv(
     REPORT_DIR / "event_comparison.csv",
+    index=False,
     encoding="utf-8-sig",
 )
 
@@ -156,8 +184,11 @@ for column in numeric_columns:
 # 8. 변수 간 상관관계 그래프
 correlation = df[numeric_columns].corr()
 
-correlation.to_csv(
+correlation.index.name = "feature"
+
+correlation.reset_index().to_csv(
     REPORT_DIR / "correlation.csv",
+    index=False,
     encoding="utf-8-sig",
 )
 
