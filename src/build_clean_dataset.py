@@ -37,10 +37,19 @@ def main():
         .diff()
         .dt.total_seconds()
     )    
+
+    # 원본 좌표는 스케일 팩터 10000이 적용된 정수이므로 mm 단위 열 생성
+    df["x_axis_mm"] = df["x_axis"] / 10000
+    df["y_axis_mm"] = df["y_axis"] / 10000
+    df["z_axis_mm"] = df["z_axis"] / 10000
         
     # 분석용 상태 플래그 추가
     df["is_alarm"] = df["alarm"].ne(0)
-    df["is_emergency"] = df["emergency"].ne(0)
+
+    # 코드 1은 실제 비상, 코드 2는 RESET 상태로 구분
+    df["is_emergency"] = df["emergency"].eq(1)
+    df["is_reset"] = df["emergency"].eq(2)
+
     df["is_spindle_overload"] = df["spindle_load"].gt(100)
     df["is_abnormal_interval"] = df["interval_seconds"].gt(
         INTERVAL_THRESHOLD_SECONDS
@@ -51,6 +60,7 @@ def main():
         [
             "is_alarm",
             "is_emergency",
+            "is_reset",
             "is_spindle_overload",
             "is_abnormal_interval",
         ]
@@ -72,7 +82,8 @@ def main():
     print(f"입력 행 수: {original_rows:,}")
     print(f"출력 행 수: {len(df):,}")
     print(f"알람 행 수: {df['is_alarm'].sum():,}")
-    print(f"비상 상태 행 수: {df['is_emergency'].sum():,}")
+    print(f"실제 비상 상태 행 수: {df['is_emergency'].sum():,}")
+    print(f"RESET 상태 행 수: {df['is_reset'].sum():,}")
     print(f"스핀들 부하 100% 초과: {df['is_spindle_overload'].sum():,}")
     print(f"수집 간격 15초 초과: {df['is_abnormal_interval'].sum():,}")
     print(f"전체 관심 관측치: {df['has_event'].sum():,}")
