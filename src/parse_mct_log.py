@@ -100,7 +100,8 @@ def parse_log_file(log_file, writer):
     skipped_lines = 0
 
     # 대용량 파일이니 한 줄씩 읽어 메모리 사용량 줄임.
-    with log_file.open("r", encoding="utf-8", errors="replace") as file:
+    # 원본 로그는 Windows 한글 인코딩(CP949)으로 저장되어 있으므로 인코딩 지정.
+    with log_file.open("r", encoding="cp949") as file:
         for line in file:
             match = LOG_PATTERN.match(line.strip())
 
