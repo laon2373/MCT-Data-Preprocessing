@@ -1,0 +1,20 @@
+﻿current_tool,sample_count,insufficient_data,rpm_median,rpm_p95,rpm_p99,load_median,load_p95,load_p99,feed_median,feed_p95,feed_p99,rpm_error_median,rpm_error_p95,rpm_error_p99,rpm_std_1min_p95,load_std_1min_p95,rpmerr_std_1min_p95,reliability_note,basis
+4,66169,False,14989.0,14989.0,14989.0,11.0,11.0,11.0,1599.0,1800.0,1800.0,1.0,2.0,2.0,0.0,0.52,0.67,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+1,33209,False,8990.0,9000.0,9000.0,8.0,12.0,14.0,2708.0,3200.0,3730.92,4.0,6.0,6.0,4.05,3.08,4.68,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+3,23994,False,14989.0,14989.0,14989.0,11.0,11.0,12.0,1784.0,3821.05,5042.14,1.0,2.0,2.0,0.0,0.54,0.67,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+6,19741,False,16991.0,16991.0,16991.0,12.0,13.0,13.0,1277.0,1300.0,4084.0,1.0,2.0,2.0,0.0,0.7,0.52,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+13,17002,False,22001.0,22001.0,22001.0,14.0,15.0,15.0,383.0,400.0,4233.98,-4.0,-4.0,-3.0,0.0,0.52,0.48,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+10,15395,False,19989.0,19989.0,19989.0,13.0,14.0,14.0,472.0,815.2,4462.0,1.0,2.0,2.0,0.0,0.52,0.52,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+8,8109,False,17989.0,17989.0,17989.0,12.0,13.0,13.0,660.0,2567.0,4818.12,-1.0,0.0,0.0,0.0,0.52,0.6,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+16,7177,False,22001.0,22001.0,22001.0,15.0,15.0,15.0,400.0,400.0,400.0,-4.0,-4.0,-3.0,0.0,0.47,0.47,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+5,6655,False,15990.0,15990.0,15990.0,11.0,12.0,12.0,1392.0,3876.3,5000.0,-4.0,-3.0,-3.0,0.0,0.52,0.5,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+2,4108,False,6990.0,6990.0,6990.0,6.0,7.0,7.0,1000.0,4605.7,5363.69,2.0,3.0,3.0,0.0,0.79,0.79,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+15,3961,False,22001.0,22001.0,22001.0,15.0,15.0,15.0,400.0,400.0,400.0,-4.0,-4.0,-4.0,0.0,0.4,0.47,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+18,3804,False,17989.0,17989.0,17989.0,12.0,13.0,13.0,652.0,1154.5,4808.0,-1.0,0.0,0.0,0.0,0.52,0.53,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+14,3637,False,22001.0,22001.0,22001.0,14.0,15.0,15.0,377.0,3093.0,4350.0,-4.0,-4.0,-3.0,0.0,0.52,0.47,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+19,2481,False,19989.0,23991.0,23991.0,14.0,16.0,17.0,500.0,3093.0,5000.0,1.0,2.0,2.0,0.0,0.76,0.53,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+12,1952,False,25990.0,25990.0,25990.0,17.0,17.0,18.0,148.0,150.0,4583.5,1.0,2.0,2.0,0.0,0.42,0.47,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+11,1481,False,21491.0,21491.0,21491.0,14.0,15.0,15.0,236.0,2567.0,4628.8,-2.0,-1.0,-1.0,0.0,0.53,0.53,ok,normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+9,220,True,19989.0,19989.0,19989.0,13.0,13.05,14.0,566.0,600.0,3638.31,1.0,2.0,2.0,0.0,0.48,0.52,"sample<500, baseline unreliable",normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+7,98,True,17989.0,17989.0,17989.0,13.0,13.0,16.13,586.0,2796.35,5000.0,-1.0,0.0,160.17,0.0,0.54,0.72,"sample<500, baseline unreliable",normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
+20,2,True,4009.0,7591.0,7909.4,4.0,5.8,5.96,4623.5,4962.35,4992.47,47.0,90.2,94.04,3658.31,1.6,37.07,"sample<500, baseline unreliable",normal_cutting(RPM>0&FEED>0); reference_only_not_threshold
