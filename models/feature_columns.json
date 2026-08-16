@@ -1,0 +1,21 @@
+{
+  "feature_columns": [
+    "rpm_mean",
+    "rpm_std",
+    "rpm_min",
+    "rpm_max",
+    "rpm_range",
+    "load_mean",
+    "load_std",
+    "load_max",
+    "rpm_error_mean",
+    "rpm_error_std",
+    "rpm_error_absmax",
+    "load_vs_normal",
+    "rpm_std_vs_normal",
+    "rpm_error_vs_normal"
+  ],
+  "n_features": 14,
+  "target": "label",
+  "score_meaning": "predict_proba(...)[:,1] = Anomaly Score (NOT failure probability)"
+}

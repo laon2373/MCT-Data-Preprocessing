@@ -6,6 +6,12 @@ data/*
 output/*
 !output/.gitkeep
 
+# 실제 기업 데이터 기반 추론 분석 결과
+reports/inference/
+
+# 추론 파이프라인 검증용 백업 파일
+src/inference_pipeline_verified.py
+
 # Python 캐시 파일
 __pycache__/
 *.py[cod]
