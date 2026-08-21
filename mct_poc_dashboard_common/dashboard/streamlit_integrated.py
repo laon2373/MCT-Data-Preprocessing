@@ -3,13 +3,14 @@
 실행:  streamlit run app.py
 데이터: data/ 폴더의 사전 계산 결과만 읽는다. (모델 연산 없음 → 어떤 PC에서든 즉시 구동)
 """
-import json, os, time, datetime as dt
+import json, os, time, datetime as dt, hashlib, io, zipfile
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+import requests
 
 st.set_page_config(page_title="MCT 3호 예지보전 PoC", page_icon="🛠️", layout="wide")
 
@@ -45,6 +46,68 @@ h1 {{ font-size: 1.7rem !important; letter-spacing: -0.01em; }}
 .kpi-sub {{ font-size:.74rem; color:{T['muted']}; margin-top:5px; }}
 .dot {{ width:11px; height:11px; border-radius:50%; display:inline-block; align-self:center; }}
 [data-testid="stDataFrame"] * {{ font-variant-numeric: tabular-nums; }}
+
+/* ── 상단 분석 모델 선택 ───────────────────────────────────────────── */
+div[data-testid="stRadio"] {{
+    margin-top: .35rem;
+    margin-bottom: .35rem;
+}}
+
+div[data-testid="stRadio"] > div {{
+    gap: 12px;
+}}
+
+div[data-testid="stRadio"] label {{
+    flex: 1 1 0;
+    min-width: 180px;
+    background: {T['surface']};
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 12px;
+    padding: 12px 16px !important;
+    transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}}
+
+div[data-testid="stRadio"] label:hover {{
+    border-color: rgba(57,135,229,.70);
+    background: rgba(57,135,229,.06);
+}}
+
+div[data-testid="stRadio"] label:has(input:checked) {{
+    border-color: {T['blue']};
+    background: rgba(57,135,229,.14);
+    box-shadow: inset 0 0 0 1px rgba(57,135,229,.16);
+}}
+
+div[data-testid="stRadio"] label:has(input:checked) p {{
+    color: {T['ink']} !important;
+    font-weight: 700 !important;
+}}
+
+div[data-testid="stRadio"] label p {{
+    font-size: .92rem !important;
+    color: {T['ink2']} !important;
+    margin: 0 !important;
+}}
+
+.model-nav-kicker {{
+    margin-top: .45rem;
+    color: {T['muted']};
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+}}
+
+.model-nav-desc {{
+    color: {T['ink2']};
+    font-size: .82rem;
+    margin: .2rem 0 .75rem;
+    line-height: 1.55;
+}}
+
+.model-nav-divider {{
+    border-top: 1px solid rgba(255,255,255,.08);
+    margin: .55rem 0 1rem;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,17 +160,16 @@ def load():
     meta = json.load(open(DATA_DIR / "meta.json", encoding="utf-8"))
     return df, alarms, novel, events, daily, meta
 
-df, alarms, novel, events, daily, meta = load()
-DATES = sorted(df.ts.dt.date.unique())
+default_df, default_alarms, default_novel, default_events, default_daily, default_meta = load()
 WD = "월화수목금토일"
 
 st.title("MCT 3호 예지보전 PoC 대시보드")
+
 st.markdown(
-    '<div class="chips">'
-    '<span class="chip">분석 기간 2026-05-01 – 05-31 (31일)</span>'
-    f'<span class="chip">수집 데이터 {len(df):,} 사이클</span>'
-    f'<span class="chip">정상 기준 학습 {meta["train_range"].replace("~", "–")}</span>'
-    '</div>', unsafe_allow_html=True)
+    '<div class="model-nav-kicker">ANALYSIS MODE</div>'
+    '<div class="model-nav-desc">분석 목적에 따라 모델 화면을 선택하세요.</div>',
+    unsafe_allow_html=True,
+)
 
 # ── 최종 통합 화면용 모델 선택 ───────────────────────────────────────────────
 selected_model = st.radio(
@@ -115,6 +177,18 @@ selected_model = st.radio(
     ["비지도학습 M2*", "지도학습 XGBoost", "모델 비교"],
     horizontal=True,
     label_visibility="collapsed",
+)
+
+model_descriptions = {
+    "비지도학습 M2*": "운전조건별 정상 기준에서 벗어나는 변화와 지속적인 이상 징후를 확인합니다.",
+    "지도학습 XGBoost": "가상 이상 시나리오와 유사한 1분 절삭 패턴을 분석하고 주요 Feature 영향을 확인합니다.",
+    "모델 비교": "공통 전처리 기준의 실제 로그 반응과 동일 합성 이상 실험 결과를 비교합니다.",
+}
+
+st.markdown(
+    f'<div class="model-nav-desc">{model_descriptions[selected_model]}</div>'
+    '<div class="model-nav-divider"></div>',
+    unsafe_allow_html=True,
 )
 
 if selected_model == "지도학습 XGBoost":
@@ -127,7 +201,219 @@ if selected_model == "모델 비교":
     render_comparison_view()
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["① 실시간 관제 (리플레이)", "② 이상 알람", "③ 월간 운영 리포트", "④ 분석 방법과 신뢰성"])
+# ── M2* 업로드 분석 ──────────────────────────────────────────────────────────
+M2_API_URL = "http://127.0.0.1:8000/predict/m2"
+
+
+def api_predict_m2(filename, file_bytes):
+    """M2* 분석을 통합 FastAPI에 요청하고 결과 ZIP을 DataFrame으로 복원."""
+    response = requests.post(
+        M2_API_URL,
+        files={
+            "file": (
+                filename,
+                file_bytes,
+                "application/octet-stream",
+            )
+        },
+        timeout=1800,
+    )
+
+    if response.status_code != 200:
+        detail = response.text
+
+        try:
+            detail = response.json().get("detail", detail)
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            f"HTTP {response.status_code} - {detail}"
+        )
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(
+            "FastAPI가 반환한 M2* 결과 파일을 읽을 수 없습니다."
+        ) from exc
+
+    with archive:
+        df = pd.read_csv(
+            archive.open("df.csv"),
+            parse_dates=["ts"],
+            low_memory=False,
+        )
+        alarms = pd.read_csv(
+            archive.open("alarms.csv"),
+            parse_dates=["시작", "종료"],
+        )
+        novel = pd.read_csv(
+            archive.open("novel.csv"),
+            parse_dates=["시작", "종료"],
+        )
+        events = pd.read_csv(
+            archive.open("events.csv"),
+            parse_dates=["시각"],
+        )
+        daily = pd.read_csv(
+            archive.open("daily.csv"),
+            parse_dates=["date"],
+        )
+
+        meta = json.loads(
+            archive.read("meta.json").decode("utf-8")
+        )
+        summary = json.loads(
+            archive.read("summary.json").decode("utf-8")
+        )
+        file_infos = json.loads(
+            archive.read("file_infos.json").decode("utf-8")
+        )
+
+    for column in ["novel", "f_pt", "f_ew", "f_m3"]:
+        if column not in df.columns:
+            continue
+
+        if df[column].dtype == object:
+            df[column] = (
+                df[column]
+                .astype(str)
+                .str.lower()
+                .map({
+                    "true": True,
+                    "false": False,
+                    "1": True,
+                    "0": False,
+                })
+                .fillna(False)
+            )
+        else:
+            df[column] = df[column].fillna(False).astype(bool)
+
+    return {
+        "df": df,
+        "alarms": alarms,
+        "novel": novel,
+        "events": events,
+        "daily": daily,
+        "meta": meta,
+        "summary": summary,
+        "file_infos": file_infos,
+    }
+
+
+with st.container(border=True):
+    st.markdown("##### 비지도학습 M2* 분석 데이터")
+    st.caption(
+        "단일 `.log` 또는 여러 날짜의 `.log`가 들어 있는 `.zip`을 업로드하면 "
+        "기존에 학습해 둔 M2* 정상 기준으로 분석합니다. 업로드 데이터로 모델을 다시 학습하지 않습니다."
+    )
+
+    m2_uploaded = st.file_uploader(
+        "M2* 분석 로그",
+        type=["log", "zip"],
+        key="m2_uploader",
+        label_visibility="collapsed",
+    )
+
+    upload_col, reset_col = st.columns([4, 1])
+
+    with upload_col:
+        if m2_uploaded is not None:
+            size_mb = m2_uploaded.size / 1024 / 1024
+            st.caption(f"선택 파일: {m2_uploaded.name} · {size_mb:.2f} MB")
+
+    with reset_col:
+        if st.button("기본 5월 데이터", width="stretch"):
+            st.session_state.pop("m2_upload_result", None)
+            st.session_state.pop("m2_upload_hash", None)
+            st.rerun()
+
+    if m2_uploaded is not None:
+        m2_bytes = m2_uploaded.getvalue()
+        m2_hash = hashlib.sha1(m2_bytes).hexdigest()
+
+        if st.button("M2* 분석 시작", type="primary", width="stretch"):
+            try:
+                with st.spinner(
+                    "FastAPI로 로그 전송 → 공통 전처리 → M2* 추론 → 결과 수신 중..."
+                ):
+                    m2_result = api_predict_m2(
+                        m2_uploaded.name,
+                        m2_bytes,
+                    )
+
+                st.session_state["m2_upload_result"] = m2_result
+                st.session_state["m2_upload_hash"] = m2_hash
+
+                st.success(
+                    "FastAPI를 통한 M2* 분석이 완료되었습니다."
+                )
+
+            except requests.exceptions.ConnectionError:
+                st.error(
+                    "통합 FastAPI 서버에 연결할 수 없습니다. "
+                    "프로젝트 루트에서 `python run_app.py`로 실행해주세요."
+                )
+
+            except requests.exceptions.Timeout:
+                st.error(
+                    "M2* 분석 시간이 초과되었습니다."
+                )
+
+            except Exception as exc:
+                st.error(
+                    f"M2* 분석 중 오류: {exc}"
+                )
+
+# 업로드 분석 결과가 현재 선택한 파일과 같을 때만 대시보드 데이터로 사용
+use_uploaded_m2 = False
+
+if m2_uploaded is not None:
+    current_m2_hash = hashlib.sha1(m2_uploaded.getvalue()).hexdigest()
+    use_uploaded_m2 = (
+        "m2_upload_result" in st.session_state
+        and st.session_state.get("m2_upload_hash") == current_m2_hash
+    )
+
+if use_uploaded_m2:
+    m2_result = st.session_state["m2_upload_result"]
+    df = m2_result["df"]
+    alarms = m2_result["alarms"]
+    novel = m2_result["novel"]
+    events = m2_result["events"]
+    daily = m2_result["daily"]
+    meta = m2_result["meta"]
+    data_source_text = "업로드 로그 · FastAPI → M2* 추론"
+else:
+    df = default_df
+    alarms = default_alarms
+    novel = default_novel
+    events = default_events
+    daily = default_daily
+    meta = default_meta
+    data_source_text = "기본 2026년 5월 분석 결과"
+
+DATES = sorted(df.ts.dt.date.unique())
+
+period_start = pd.Timestamp(df.ts.min()).date()
+period_end = pd.Timestamp(df.ts.max()).date()
+period_days = (period_end - period_start).days + 1
+
+st.markdown(
+    '<div class="chips">'
+    f'<span class="chip">분석 기간 {period_start:%Y-%m-%d} – {period_end:%Y-%m-%d} ({period_days}일)</span>'
+    f'<span class="chip">수집 데이터 {len(df):,} 사이클</span>'
+    f'<span class="chip">정상 기준 학습 {str(meta.get("train_range", "-")).replace("~", "–")}</span>'
+    f'<span class="chip">{data_source_text}</span>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["① 실시간 관제 (리플레이)", "② 이상 알람", "③ 운영 리포트", "④ 분석 방법과 신뢰성"]
+)
 
 # ──────────────────────────────── ① 실시간 관제 ────────────────────────────────
 STATE_KR = {"steady": ("가공 중", T["good"]), "transient": ("가감속", T["warn"]),
@@ -173,13 +459,20 @@ def monitor_figure(day_df, t_cur, win_min=30, alarm_spans=None):
 with tab1:
     left, right = st.columns([1, 3], gap="large")
     with left:
-        day = st.selectbox("날짜", DATES, index=DATES.index(dt.date(2026, 5, 12)),
-                           format_func=lambda d: f"{d:%m월 %d일} ({WD[d.weekday()]})", key="mon_day")
+        preferred_day = dt.date(2026, 5, 12)
+        default_day_index = DATES.index(preferred_day) if preferred_day in DATES else 0
+        day = st.selectbox(
+            "날짜",
+            DATES,
+            index=default_day_index,
+            format_func=lambda d: f"{d:%m월 %d일} ({WD[d.weekday()]})",
+            key="mon_day",
+        )
         tsel = st.slider("시작 시각", value=dt.time(19, 30), step=dt.timedelta(minutes=5),
                          format="HH:mm", key="mon_time")
         speed = st.select_slider("재생 속도", ["느리게", "보통", "빠르게"], value="보통")
         play = st.toggle("▶ 리플레이 재생", key="play")
-        st.caption("5월 기록을 관제 화면처럼 재생합니다. 빨간 점선·음영이 알람 지점과 지속 구간.")
+        st.caption("선택한 기록을 관제 화면처럼 재생합니다. 빨간 점선·음영이 알람 지점과 지속 구간.")
     day_df = df[df.ts.dt.date == day]
     t0 = pd.Timestamp.combine(day, tsel)
     ph = right.empty()
@@ -210,7 +503,7 @@ with tab1:
 # ──────────────────────────────── ② 이상탐지 ────────────────────────────────
 with tab2:
     with st.container(border=True):
-        st.markdown("##### 5월 전체 이상 점수 추이")
+        st.markdown("##### 분석 기간 전체 이상 점수 추이")
         st.caption("같은 공구·회전수 조건의 평소 부하 대비 이탈 점수. 점선을 넘는 상태가 이어지면 알람, "
                    "회색 음영은 기준값을 뽑은 학습 구간.")
         sd_all = df[df.state == "steady"].set_index("ts")
@@ -281,14 +574,70 @@ with tab2:
     with c2.expander(f"설비 컨트롤러 이벤트 {len(events)}건 — 기계가 직접 남긴 알람·비상신호 원본"):
         st.dataframe(events, width="stretch", hide_index=True, column_config=dt_cfg)
 
-# ──────────────────────────────── ③ 월간 리포트 ────────────────────────────────
+# ──────────────────────────────── ③ 운영 리포트 ────────────────────────────────
+
+def longest_run_summary(source_df):
+    """
+    업로드 데이터에서 STATUS_RUN이 연속된 가장 긴 구간을 계산한다.
+    15초 초과 수집 공백 또는 RUN이 아닌 행이 끼면 새 구간으로 본다.
+    """
+    d = source_df.sort_values("ts").reset_index(drop=True).copy()
+
+    if d.empty:
+        return 0.0, "-"
+
+    is_run = d["status"].eq("STATUS_RUN")
+    gap = d["ts"].diff().dt.total_seconds()
+
+    new_group = (
+        is_run.ne(is_run.shift())
+        | gap.isna()
+        | gap.gt(15)
+    )
+
+    d["_group"] = new_group.cumsum()
+    runs = d[is_run].copy()
+
+    if runs.empty:
+        return 0.0, "-"
+
+    grouped = (
+        runs.groupby("_group")
+        .agg(start=("ts", "min"), end=("ts", "max"))
+        .reset_index(drop=True)
+    )
+
+    grouped["duration_sec"] = (
+        grouped["end"] - grouped["start"]
+    ).dt.total_seconds()
+
+    best = grouped.sort_values("duration_sec", ascending=False).iloc[0]
+    hours = float(best["duration_sec"]) / 3600.0
+    period = (
+        f"{best['start']:%m/%d %H:%M} – "
+        f"{best['end']:%m/%d %H:%M}"
+    )
+
+    return hours, period
+
+
+longest_run_hours, longest_run_period = longest_run_summary(df)
+
 with tab3:
     kpi_row([
-        dict(label="월평균 가동률", value=f"{daily.가동률.mean():.1f}", unit="%"),
-        dict(label="최장 연속가동", value="48.3", unit="시간", sub="5/16 09:54 – 5/18 10:12 무인 주말가공"),
+        dict(label="기간 평균 가동률", value=f"{daily.가동률.mean():.1f}", unit="%"),
+        dict(
+            label="최장 연속가동",
+            value=f"{longest_run_hours:.1f}",
+            unit="시간",
+            sub=longest_run_period,
+        ),
         dict(label="이상 알람", value=f"{int(daily.이상알람.sum())}", unit="건"),
-        dict(label="가감속 구간 사이클", value=f"{(df.state == 'transient').sum():,}",
-             sub="부하 90% 이상 스파이크는 전부 이 구간에서 발생 (설비 이상 아님)"),
+        dict(
+            label="가감속 구간 사이클",
+            value=f"{(df.state == 'transient').sum():,}",
+            sub="M2* 이상 판정과 분리해 관리",
+        ),
     ])
 
     with st.container(border=True):
@@ -310,7 +659,7 @@ with tab3:
     c1, c2 = st.columns(2)
     with c1, st.container(border=True):
         st.markdown("##### 시간대별 평균 가동률 (%)")
-        st.caption("낮에는 셋업, 야간에는 무인 가공이 진행되는 패턴이 나타납니다.")
+        st.caption("업로드한 분석 기간의 시간대별 STATUS_RUN 비율을 보여줍니다.")
         hourly = df.assign(h=df.ts.dt.hour).groupby("h").status.apply(lambda s: (s == "STATUS_RUN").mean() * 100)
         f1 = go.Figure(go.Scatter(x=hourly.index, y=hourly.values, fill="tozeroy",
                                   fillcolor=T["band"], line=dict(color=T["blue"], width=2),
@@ -321,7 +670,12 @@ with tab3:
     with c2, st.container(border=True):
         st.markdown("##### 공구 사용 분포")
         st.caption("실제 가공에 사용된 사이클 수 기준입니다.")
-        tools = df[df.status == "STATUS_RUN"].tool.value_counts().sort_index()
+        cutting_for_tools = df[
+            (df.status == "STATUS_RUN")
+            & (df.rpm > 0)
+            & (df.feed > 0)
+        ]
+        tools = cutting_for_tools.tool.value_counts().sort_index()
         f2 = go.Figure(go.Bar(x=[f"T{t:02d}" for t in tools.index], y=tools.values,
                               marker_color=T["blue"], marker=dict(cornerradius=3),
                               hovertemplate="%{x} · %{y:,} 사이클<extra></extra>"))
@@ -330,12 +684,15 @@ with tab3:
 
     with st.container(border=True):
         st.markdown("""
-##### 데이터 품질 진단과 개선 제안
-- **축별 부하 기록 이슈** — X/Y/Z 축 부하가 전 기간 동일한 값으로 기록되어 있어, 축 단위 진단은 현재 데이터로는 불가능합니다. 로거 설정 수정만으로 개선할 수 있습니다.
-- **알람 코드 미기록** — 알람 발생 시 "Alarm"이라는 문구만 남고 코드가 기록되지 않아 원인 분석이 어렵습니다. 이 역시 로거 설정으로 개선 가능합니다.
-- **부하 90% 이상 스파이크 69건은 모두 스핀들 감속(제동) 순간**으로 확인되었습니다. 설비 이상이 아니며, 단순 임계값 감시를 쓰면 이것 때문에 하루 2회꼴 오탐이 발생합니다. 본 분석에서는 가감속 구간을 분리해 이 오탐을 제거했습니다.
-- **매주 일요일 03시경 약 3.3분의 수집 공백**이 있습니다(로거 정기 재시작으로 추정). 그 외 불규칙 공백 3건.
-- **다음 단계 제안** — 고장 시점을 예측하는 단계로 나아가려면 알람 코드, 정비 이력(CMMS), 스핀들 진동·전류 센서, NC 프로그램명 로깅이 축적되어야 합니다.
+##### 기준 데이터셋에서 확인된 데이터 품질 이슈와 개선 제안
+아래 내용은 **M2* 정상 기준을 구축한 2026년 5월 기업 데이터셋에서 확인한 사항**입니다.
+현재 새로 업로드한 로그에서 동일 현상이 발생했다고 자동으로 판정한 결과는 아닙니다.
+
+- **축별 부하 기록 이슈** — 기준 데이터셋에서는 X/Y/Z 축 부하가 동일하게 기록되어 축 단위 진단에 활용하기 어려웠습니다.
+- **알람 코드 미기록** — 기준 데이터셋의 알람 이벤트에는 상세 코드가 없어 실제 고장 원인과 연결하기 어려웠습니다.
+- **감속 구간의 높은 부하** — 기준 데이터 분석에서는 높은 부하 스파이크가 가감속 구간에서 나타날 수 있어, M2*는 가감속을 정상 가공 이상 판정과 분리합니다.
+- **수집 공백** — 기준 데이터셋에서 일부 주기적·불규칙 수집 공백이 관찰되었습니다.
+- **다음 단계 제안** — 실제 고장 시점과 정비 필요성을 검증하려면 알람 코드, 정비 이력(CMMS), 진동·전류 센서, NC 프로그램명 등의 추가 데이터가 필요합니다.
 """)
 
 # ──────────────────────────────── ④ 모델 검증 ────────────────────────────────
@@ -361,11 +718,23 @@ with tab4:
     else:
         bench = pd.read_csv(DATA_DIR / "bench.csv")
         adopted = bench[bench.채택 == 1].iloc[0]
-        test_from = pd.Timestamp(meta["train_range"].split("~")[1].strip()) + pd.Timedelta("1D")
-        test_sd = df[(df.ts >= test_from) & (df.state == "steady")]
+        benchmark_train_end = pd.Timestamp(
+            default_meta["train_range"].split("~")[1].strip()
+        )
+        test_from = benchmark_train_end + pd.Timedelta("1D")
+        test_sd = default_df[
+            (default_df.ts >= test_from)
+            & (default_df.state == "steady")
+            & (default_df.status == "STATUS_RUN")
+            & (default_df.rpm > 0)
+            & (default_df.feed > 0)
+        ]
         novel_share = 100 * test_sd.novel.mean()
         st.markdown(f"""
-##### 이 알람은 얼마나 믿을 수 있는가
+##### 모델 개발 시 벤치마크 — 2026년 5월 기준
+아래 표와 탐지율은 **현재 업로드 파일을 평가한 수치가 아니라**, M2*를 개발할 때
+2026년 5월 기준 데이터에 가상 이상을 주입해 비교한 고정 검증 결과입니다.
+
 실제 고장 기록이 없는 데이터 → 고장과 비슷한 가상 이상 신호를 심어 놓고 방식별로 얼마나
 잡는지 시험함. {len(bench)}가지 방식 모두 같은 조건(학습 5/1–21, 시험 5/22–31, 기준값 산출 규칙 동일).
 

@@ -122,11 +122,48 @@ def _load_results():
 
 
 def render_comparison_view():
-    st.markdown("##### 지도학습 XGBoost vs 비지도학습 M2*")
+    st.markdown("##### 모델 비교")
     st.caption(
-        "두 모델을 공통 전처리 데이터와 동일 합성 이상 시나리오로 비교한 결과입니다. "
-        "실제 고장 정답 라벨이 없으므로 실제 로그의 탐지는 '고장 적중률'이 아니라 "
-        "알람·탐지 후보의 차이로 해석합니다."
+        "비지도학습 M2*와 지도학습 XGBoost를 공통 전처리 기준으로 비교합니다. "
+        "실제 로그에는 고장 정답 라벨이 없으므로 아래 결과는 정확도 비교가 아니라 "
+        "두 모델이 어떤 구간에 서로 다르게 반응했는지를 확인하는 화면입니다."
+    )
+
+    st.markdown(
+        f"""
+<div style="
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:12px;
+    margin:.8rem 0 1rem;
+">
+  <div style="background:{T['surface']};border:1px solid rgba(255,255,255,.08);
+              border-radius:12px;padding:14px 16px;">
+    <div style="font-size:.76rem;color:{T['muted']};margin-bottom:5px;">M2*</div>
+    <div style="font-size:1rem;font-weight:700;color:{T['ink']};">정상 기준 이탈 감시</div>
+    <div style="font-size:.78rem;color:{T['ink2']};margin-top:6px;line-height:1.5;">
+      정상 운전조건에서 벗어나는 변화와 지속성을 중심으로 봅니다.
+    </div>
+  </div>
+  <div style="background:{T['surface']};border:1px solid rgba(255,255,255,.08);
+              border-radius:12px;padding:14px 16px;">
+    <div style="font-size:.76rem;color:{T['muted']};margin-bottom:5px;">XGBoost</div>
+    <div style="font-size:1rem;font-weight:700;color:{T['ink']};">학습 패턴 유사도 분석</div>
+    <div style="font-size:.78rem;color:{T['ink2']};margin-top:6px;line-height:1.5;">
+      학습한 가상 이상 패턴과 유사한 1분 절삭 Window를 찾습니다.
+    </div>
+  </div>
+  <div style="background:{T['surface']};border:1px solid rgba(255,255,255,.08);
+              border-radius:12px;padding:14px 16px;">
+    <div style="font-size:.76rem;color:{T['muted']};margin-bottom:5px;">해석 기준</div>
+    <div style="font-size:1rem;font-weight:700;color:{T['ink']};">많이 탐지 = 더 정확함 아님</div>
+    <div style="font-size:.78rem;color:{T['ink2']};margin-top:6px;line-height:1.5;">
+      실제 고장 라벨이 없어 Precision·Recall 같은 현장 정확도는 계산할 수 없습니다.
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
     )
 
     try:
@@ -187,32 +224,32 @@ def render_comparison_view():
     )
 
     with st.container(border=True):
-        st.markdown("##### 실제 시험 로그에서 두 모델이 어떻게 달랐나")
+        st.markdown("##### 실제 로그 반응 비교")
         st.caption(
-            "아래 수치는 실제 고장 적중 수가 아니라 각 모델이 반응한 후보 수입니다. "
-            "XGBoost가 더 많은 후보에 반응했지만, 실제 고장 정답 라벨이 없어 "
-            "그 추가 반응이 실제 이상인지 과민 반응인지 확정할 수 없습니다."
+            "동일 시험기간에서 XGBoost와 M2*가 어느 구간에 반응했는지를 비교합니다. "
+            "반응 후보의 수는 모델의 우열이나 실제 고장 적중 수를 의미하지 않습니다."
         )
 
-        st.warning(
-            "탐지 건수가 많다고 성능이 더 높은 것은 아닙니다. "
-            "현재 실제 로그에는 고장 정답 라벨이 없어 Precision·Recall 같은 "
-            "실제 탐지 성능을 계산할 수 없습니다."
-        )
+        comparison_labels = {
+            "XGBoost만 탐지": "XGBoost 추가 반응 후보",
+            "둘 다 탐지": "두 모델 공통 반응 후보",
+            "M2*만 탐지": "M2* 추가 반응 후보",
+        }
 
         counts = detail["comparison"].value_counts()
+
         count_df = pd.DataFrame(
             [
                 {
-                    "구분": "XGBoost 추가 반응 후보",
+                    "구분": comparison_labels["XGBoost만 탐지"],
                     "매칭 행 수": int(counts.get("XGBoost만 탐지", 0)),
                 },
                 {
-                    "구분": "두 모델 공통 반응 후보",
+                    "구분": comparison_labels["둘 다 탐지"],
                     "매칭 행 수": int(counts.get("둘 다 탐지", 0)),
                 },
                 {
-                    "구분": "M2* 추가 반응 후보",
+                    "구분": comparison_labels["M2*만 탐지"],
                     "매칭 행 수": int(counts.get("M2*만 탐지", 0)),
                 },
             ]
@@ -261,11 +298,7 @@ def render_comparison_view():
                     )
                 )
                 tool_table["구분"] = tool_table["구분"].replace(
-                    {
-                        "XGBoost만 탐지": "XGBoost 추가 반응 후보",
-                        "둘 다 탐지": "두 모델 공통 반응 후보",
-                        "M2*만 탐지": "M2* 추가 반응 후보",
-                    }
+                    comparison_labels
                 )
                 tool_table["공구"] = tool_table["공구"].map(
                     lambda x: f"Tool {int(x)}" if pd.notna(x) else "-"
@@ -277,19 +310,19 @@ def render_comparison_view():
                 )
 
         st.caption(
-            "주의: '둘 다 탐지'의 매칭 행 수는 한 M2* 알람이 여러 XGBoost Episode와 "
-            "겹칠 수 있어 고유 Episode 수와 같지 않습니다. 고유 겹침은 위 KPI의 "
-            f"XGBoost {xgb_overlap}건 / M2* {m2_overlap}건을 기준으로 봅니다."
+            "※ '두 모델 공통 반응 후보'의 막대는 매칭 행 수입니다. "
+            "한 M2* 알람이 여러 XGBoost Episode와 겹칠 수 있으므로 고유 건수와 다를 수 있습니다. "
+            f"고유 겹침은 XGBoost {xgb_overlap}건 / M2* {m2_overlap}건입니다."
         )
 
     # --------------------------------------------------
     # 2. 동일 합성 이상 비교
     # --------------------------------------------------
     with st.container(border=True):
-        st.markdown("##### 동일 합성 이상 시나리오 비교")
+        st.markdown("##### 모델 개발용 동일 합성 이상 실험")
         st.caption(
-            "공통 전처리 후 같은 seed와 같은 주입 위치에서 비교했습니다. "
-            "실제 고장이 아니라 모델 특성을 비교하기 위한 합성 실험입니다."
+            "공통 전처리 후 같은 seed와 같은 주입 위치에서 비교한 모델 개발용 실험입니다. "
+            "실제 설비 고장 성능이나 현장 정확도를 의미하지 않습니다."
         )
 
         syn = synthetic.copy()
@@ -371,39 +404,49 @@ def render_comparison_view():
     # 3. 최종 해석
     # --------------------------------------------------
     with st.container(border=True):
-        st.markdown("##### 현재 데이터에서의 역할 제안")
+        st.markdown("##### 현재 데이터 기준 활용 제안")
 
-        c1, c2 = st.columns(2)
+        st.markdown(
+            f"""
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:.6rem;">
+  <div style="background:{T['surface']};border:1px solid rgba(25,158,112,.42);
+              border-radius:12px;padding:16px 18px;">
+    <div style="font-size:.78rem;color:{T['aqua']};font-weight:700;margin-bottom:5px;">
+      MAIN ANALYSIS
+    </div>
+    <div style="font-size:1.05rem;font-weight:800;color:{T['ink']};margin-bottom:9px;">
+      비지도학습 M2*
+    </div>
+    <div style="color:{T['ink2']};font-size:.84rem;line-height:1.75;">
+      • 정상 운전조건에서 얼마나 벗어났는지 지속적으로 감시<br>
+      • 합성 공구 파손형 88.3%, 지속 과부하·완만한 저하 100%<br>
+      • 시험 로그 알람 후보 빈도 1.4건/일<br>
+      • 학습하지 않은 형태도 정상 기준 이탈 관점으로 확인
+    </div>
+  </div>
 
-        with c1:
-            st.markdown(
-                f"""
-**M2* — 현재 데이터에서의 주 분석 방식 제안**
-
-- 정상 운전조건에서 얼마나 벗어났는지 지속적으로 감시
-- 합성 공구 파손형 탐지율 **88.3%**
-- 지속 과부하 및 완만한 저하 **100%**
-- 시험 로그 알람 후보 빈도 **1.4건/일**
-- 학습하지 않은 이상 형태에도 정상 기준 이탈 관점으로 접근 가능
-"""
-            )
-
-        with c2:
-            st.markdown(
-                f"""
-**XGBoost — 현재 데이터에서의 보조 분석 방식 제안**
-
-- 학습한 가상 이상 패턴과 얼마나 유사한지 1분 Window 단위로 분석
-- 지속 과부하 **100%**, 완만한 저하 **98.2%** (분석 가능 구간 기준)
-- 공구 파손형은 **9.4%**로 상대적으로 약함
-- Feature Contribution으로 높은 점수의 판단 근거를 상세 확인 가능
-- 일부 공구는 Train 정상 Baseline 부족으로 분석 불가
-"""
-            )
+  <div style="background:{T['surface']};border:1px solid rgba(57,135,229,.42);
+              border-radius:12px;padding:16px 18px;">
+    <div style="font-size:.78rem;color:{T['blue']};font-weight:700;margin-bottom:5px;">
+      SUPPORT ANALYSIS
+    </div>
+    <div style="font-size:1.05rem;font-weight:800;color:{T['ink']};margin-bottom:9px;">
+      지도학습 XGBoost
+    </div>
+    <div style="color:{T['ink2']};font-size:.84rem;line-height:1.75;">
+      • 학습한 가상 이상 패턴과의 유사도를 1분 Window 단위로 분석<br>
+      • 지속 과부하 100%, 완만한 저하 98.2% (분석 가능 구간 기준)<br>
+      • 합성 공구 파손형은 9.4%로 상대적으로 약함<br>
+      • Feature Contribution으로 높은 점수의 판단 근거 확인
+    </div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
         st.info(
-            "현재 실험 결과에서는 M2*를 주 분석 방식으로 두고, "
-            "XGBoost를 특정 이상 패턴과 상세 Feature 해석을 위한 보조 분석으로 "
-            "사용하는 구성이 적합합니다. 다만 실제 고장 라벨이 확보되면 두 모델의 "
-            "현장 성능은 다시 검증해야 합니다."
+            "현재 데이터와 모델 개발 실험을 기준으로는 M2*를 주 분석 방식, "
+            "XGBoost를 학습된 이상 패턴 및 Feature 해석을 위한 보조 분석 방식으로 제안합니다. "
+            "실제 고장 라벨이 확보되면 두 모델의 현장 성능을 다시 검증해야 합니다."
         )

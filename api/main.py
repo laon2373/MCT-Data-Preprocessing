@@ -1,12 +1,18 @@
 from pathlib import Path
+import io
+import json
 import math
+import os
 import shutil
 import sys
 import tempfile
+import zipfile
 
 import pandas as pd
 import xgboost as xgb
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 
 # =========================================================
@@ -18,11 +24,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+DASHBOARD_DIR = PROJECT_ROOT / "mct_poc_dashboard_common" / "dashboard"
+
+if str(DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(DASHBOARD_DIR))
+
 
 from src.inference_pipeline import (
     load_model_artifacts,
     run_inference,
 )
+
+from m2_upload_pipeline import analyze_uploaded_file as analyze_m2_uploaded
 
 
 # =========================================================
@@ -30,8 +43,8 @@ from src.inference_pipeline import (
 # =========================================================
 
 app = FastAPI(
-    title="MCT 예지보전 API",
-    version="0.2.0",
+    title="MCT 예지보전 통합 AI API",
+    version="1.0.0",
 )
 
 
@@ -378,8 +391,178 @@ def _window_detail_summary(
 def health_check():
     return {
         "status": "ok",
-        "message": "MCT Predictive Maintenance API is running",
+        "message": "MCT Predictive Maintenance Unified API is running",
+        "models": {
+            "m2": "ready",
+            "xgboost": "ready",
+        },
+        "endpoints": {
+            "m2": "/predict/m2",
+            "xgboost": "/predict",
+        },
     }
+
+
+
+# =========================================================
+# M2* Batch 추론
+# =========================================================
+
+M2_RESPONSE_COLUMNS = [
+    "ts", "status", "state", "tool", "feed",
+    "srate", "sload", "rpm", "band",
+    "ms", "ss", "zload", "ewma",
+    "novel", "f_pt", "f_ew", "f_m3",
+]
+
+
+def _zip_write_dataframe(
+    archive: zipfile.ZipFile,
+    filename: str,
+    df: pd.DataFrame,
+):
+    """큰 DataFrame을 ZIP 안의 CSV로 스트리밍 저장."""
+    with archive.open(filename, "w") as raw:
+        with io.TextIOWrapper(
+            raw,
+            encoding="utf-8",
+            newline="",
+        ) as text:
+            df.to_csv(text, index=False)
+
+
+def _build_m2_response_zip(result: dict) -> Path:
+    fd, temp_name = tempfile.mkstemp(suffix=".m2result.zip")
+    os.close(fd)
+    temp_path = Path(temp_name)
+
+    df = result["df"].copy()
+
+    keep = [
+        column
+        for column in M2_RESPONSE_COLUMNS
+        if column in df.columns
+    ]
+
+    with zipfile.ZipFile(
+        temp_path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+    ) as archive:
+        _zip_write_dataframe(
+            archive,
+            "df.csv",
+            df[keep],
+        )
+        _zip_write_dataframe(
+            archive,
+            "alarms.csv",
+            result["alarms"],
+        )
+        _zip_write_dataframe(
+            archive,
+            "novel.csv",
+            result["novel"],
+        )
+        _zip_write_dataframe(
+            archive,
+            "events.csv",
+            result["events"],
+        )
+        _zip_write_dataframe(
+            archive,
+            "daily.csv",
+            result["daily"],
+        )
+
+        archive.writestr(
+            "meta.json",
+            json.dumps(
+                result.get("meta", {}),
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        archive.writestr(
+            "summary.json",
+            json.dumps(
+                result.get("summary", {}),
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        archive.writestr(
+            "file_infos.json",
+            json.dumps(
+                result.get("file_infos", []),
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+
+    return temp_path
+
+
+@app.post("/predict/m2")
+def predict_m2(
+    file: UploadFile = File(...)
+):
+    """
+    .log / .zip을 받아 M2* batch 분석을 수행한다.
+
+    Streamlit → FastAPI → 공통 전처리 → M2* → 결과 ZIP → Streamlit
+    """
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="파일명이 없습니다.",
+        )
+
+    suffix = Path(file.filename).suffix.lower()
+
+    if suffix not in {".log", ".zip"}:
+        raise HTTPException(
+            status_code=400,
+            detail="M2* 분석은 .log 또는 .zip만 지원합니다.",
+        )
+
+    try:
+        file_bytes = file.file.read()
+
+        if not file_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="업로드 파일이 비어 있습니다.",
+            )
+
+        result = analyze_m2_uploaded(
+            file.filename,
+            file_bytes,
+        )
+
+        result_zip = _build_m2_response_zip(result)
+
+        return FileResponse(
+            result_zip,
+            media_type="application/zip",
+            filename="m2_analysis_result.zip",
+            background=BackgroundTask(
+                lambda: result_zip.unlink(missing_ok=True)
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"M2* 분석 중 오류가 발생했습니다: {exc}",
+        )
+
+    finally:
+        file.file.close()
 
 
 # =========================================================
@@ -720,163 +903,7 @@ def predict_log(
             score_series = []
 
         # -------------------------------------------------
-        # 6. 전체 분석 Window 상세 정보
-        # -------------------------------------------------
-        # 기존 top_windows는 "점수가 높은 일부 구간"만 담고 있어
-        # Streamlit 공구 필터가 일부 공구만 보여주는 문제가 있었다.
-        # 따라서 실제 AI 분석이 완료된 모든 Window의 핵심 값을 함께 반환한다.
-
-        window_details = []
-
-        if not supported_df.empty:
-            detail_columns = [
-                "window_start",
-                "window_end",
-                "current_tool",
-                "sample_count",
-                "anomaly_score",
-                "load_vs_normal",
-                "rpm_std_vs_normal",
-                "rpm_error_vs_normal",
-            ]
-
-            available_columns = [
-                column
-                for column in detail_columns
-                if column in supported_df.columns
-            ]
-
-            window_detail_df = (
-                supported_df[available_columns]
-                .dropna(subset=["anomaly_score"])
-                .sort_values("window_start")
-                .copy()
-            )
-
-            for _, row in window_detail_df.iterrows():
-                window_details.append(
-                    {
-                        "window_start": str(row["window_start"]),
-                        "window_end": str(row["window_end"]),
-                        "current_tool": int(row["current_tool"]),
-                        "sample_count": int(row["sample_count"]),
-                        "anomaly_score": float(row["anomaly_score"]),
-                        "load_vs_normal": _to_float(row.get("load_vs_normal")),
-                        "rpm_std_vs_normal": _to_float(row.get("rpm_std_vs_normal")),
-                        "rpm_error_vs_normal": _to_float(row.get("rpm_error_vs_normal")),
-                    }
-                )
-
-        # 공구 목록도 "상위 점수 구간"이 아니라 전체 분석 데이터에서 계산한다.
-        used_tool_values = []
-
-        for frame in [result_df, skipped_df]:
-            if (
-                frame is not None
-                and not frame.empty
-                and "current_tool" in frame.columns
-            ):
-                values = pd.to_numeric(
-                    frame["current_tool"],
-                    errors="coerce",
-                ).dropna()
-
-                used_tool_values.extend(
-                    values.astype(int).tolist()
-                )
-
-        used_tools = sorted(set(used_tool_values))
-
-        if (
-            supported_df is not None
-            and not supported_df.empty
-            and "current_tool" in supported_df.columns
-        ):
-            supported_tools = sorted(
-                pd.to_numeric(
-                    supported_df["current_tool"],
-                    errors="coerce",
-                )
-                .dropna()
-                .astype(int)
-                .unique()
-                .tolist()
-            )
-        else:
-            supported_tools = []
-
-        unsupported_tools = sorted(
-            set(used_tools) - set(supported_tools)
-        )
-
-        # 공구별 AI 분석 가능 범위를 명확히 보여주기 위한 집계
-        tool_analysis_summary = []
-
-        for tool in used_tools:
-            analyzed_count = 0
-            baseline_missing_count = 0
-            insufficient_count = 0
-
-            if (
-                supported_df is not None
-                and not supported_df.empty
-                and "current_tool" in supported_df.columns
-            ):
-                analyzed_count = int(
-                    (
-                        pd.to_numeric(
-                            supported_df["current_tool"],
-                            errors="coerce",
-                        )
-                        == tool
-                    ).sum()
-                )
-
-            if (
-                result_df is not None
-                and not result_df.empty
-                and "current_tool" in result_df.columns
-                and "supported" in result_df.columns
-            ):
-                tool_values = pd.to_numeric(
-                    result_df["current_tool"],
-                    errors="coerce",
-                )
-
-                baseline_missing_count = int(
-                    (
-                        (tool_values == tool)
-                        & (~result_df["supported"].astype(bool))
-                    ).sum()
-                )
-
-            if (
-                skipped_df is not None
-                and not skipped_df.empty
-                and "current_tool" in skipped_df.columns
-            ):
-                insufficient_count = int(
-                    (
-                        pd.to_numeric(
-                            skipped_df["current_tool"],
-                            errors="coerce",
-                        )
-                        == tool
-                    ).sum()
-                )
-
-            tool_analysis_summary.append(
-                {
-                    "tool": int(tool),
-                    "analyzed_windows": analyzed_count,
-                    "baseline_missing_windows": baseline_missing_count,
-                    "insufficient_windows": insufficient_count,
-                    "analysis_supported": analyzed_count > 0,
-                }
-            )
-
-        # -------------------------------------------------
-        # 7. 업로드 데이터 분석용 요약
+        # 6. 업로드 데이터 분석용 요약
         # -------------------------------------------------
 
         clean_rows = int(
@@ -904,7 +931,196 @@ def predict_log(
         )
 
         # -------------------------------------------------
-        # 7. API 결과 반환
+        # 7. Streamlit 상세 조회용 Window / 공구 정보
+        # -------------------------------------------------
+        #
+        # 기존 API는 score_series, 최고점, Top10만 반환하고
+        # 모든 지원 Window(window_details)는 반환하지 않았다.
+        # 그 때문에 실제로 XGBoost Window가 존재해도
+        # Streamlit의 "확인이 필요한 시간대" 탭은 빈 목록으로 보였다.
+        # 모델 계산은 변경하지 않고 API 응답만 보완한다.
+
+        window_details = []
+
+        if not supported_df.empty:
+            detail_columns = [
+                "window_start",
+                "window_end",
+                "current_tool",
+                "sample_count",
+                "anomaly_score",
+                "load_vs_normal",
+                "rpm_std_vs_normal",
+                "rpm_error_vs_normal",
+            ]
+
+            available_detail_columns = [
+                column
+                for column in detail_columns
+                if column in supported_df.columns
+            ]
+
+            detail_df = (
+                supported_df[
+                    available_detail_columns
+                ]
+                .dropna(subset=["anomaly_score"])
+                .sort_values("window_start")
+                .copy()
+            )
+
+            for _, row in detail_df.iterrows():
+                window_details.append(
+                    {
+                        "window_start": str(
+                            row["window_start"]
+                        ),
+                        "window_end": str(
+                            row["window_end"]
+                        ),
+                        "current_tool": int(
+                            row["current_tool"]
+                        ),
+                        "sample_count": int(
+                            row["sample_count"]
+                        ),
+                        "anomaly_score": _to_float(
+                            row["anomaly_score"]
+                        ),
+                        "load_vs_normal": _to_float(
+                            row.get(
+                                "load_vs_normal"
+                            )
+                        ),
+                        "rpm_std_vs_normal": _to_float(
+                            row.get(
+                                "rpm_std_vs_normal"
+                            )
+                        ),
+                        "rpm_error_vs_normal": _to_float(
+                            row.get(
+                                "rpm_error_vs_normal"
+                            )
+                        ),
+                    }
+                )
+
+        # 전체 사용 공구
+        used_tool_frames = []
+
+        if result_df is not None and not result_df.empty:
+            used_tool_frames.append(
+                result_df[["current_tool"]].copy()
+            )
+
+        if skipped_df is not None and not skipped_df.empty:
+            if "current_tool" in skipped_df.columns:
+                used_tool_frames.append(
+                    skipped_df[["current_tool"]].copy()
+                )
+
+        if used_tool_frames:
+            used_tool_series = pd.concat(
+                used_tool_frames,
+                ignore_index=True,
+            )["current_tool"]
+
+            used_tools = sorted(
+                int(tool)
+                for tool in pd.to_numeric(
+                    used_tool_series,
+                    errors="coerce",
+                )
+                .dropna()
+                .unique()
+            )
+        else:
+            used_tools = []
+
+        # 정상 Baseline이 있어 실제 XGBoost 점수를 계산한 공구
+        if (
+            not supported_df.empty
+            and "current_tool" in supported_df.columns
+        ):
+            supported_tools = sorted(
+                int(tool)
+                for tool in pd.to_numeric(
+                    supported_df["current_tool"],
+                    errors="coerce",
+                )
+                .dropna()
+                .unique()
+            )
+        else:
+            supported_tools = []
+
+        # 실제 절삭 Window는 있으나 Train Normal Baseline이 없는 공구
+        unsupported_tools = sorted(
+            set(used_tools)
+            - set(supported_tools)
+        )
+
+        # 공구별 분석 범위 요약
+        tool_analysis_summary = []
+
+        for tool in used_tools:
+            analyzed_windows = 0
+            baseline_missing_windows = 0
+            insufficient_windows = 0
+
+            if (
+                not result_df.empty
+                and "current_tool" in result_df.columns
+            ):
+                tool_result = result_df[
+                    pd.to_numeric(
+                        result_df["current_tool"],
+                        errors="coerce",
+                    )
+                    == tool
+                ]
+
+                if "supported" in tool_result.columns:
+                    analyzed_windows = int(
+                        tool_result["supported"]
+                        .fillna(False)
+                        .astype(bool)
+                        .sum()
+                    )
+                    baseline_missing_windows = int(
+                        (
+                            ~tool_result["supported"]
+                            .fillna(False)
+                            .astype(bool)
+                        ).sum()
+                    )
+
+            if (
+                not skipped_df.empty
+                and "current_tool" in skipped_df.columns
+            ):
+                insufficient_windows = int(
+                    (
+                        pd.to_numeric(
+                            skipped_df["current_tool"],
+                            errors="coerce",
+                        )
+                        == tool
+                    ).sum()
+                )
+
+            tool_analysis_summary.append(
+                {
+                    "tool": int(tool),
+                    "analyzed_windows": analyzed_windows,
+                    "baseline_missing_windows": baseline_missing_windows,
+                    "insufficient_windows": insufficient_windows,
+                    "analysis_supported": analyzed_windows > 0,
+                }
+            )
+
+        # -------------------------------------------------
+        # 8. API 결과 반환
         # -------------------------------------------------
 
         return {
@@ -964,14 +1180,13 @@ def predict_log(
 
             "score_series": score_series,
 
+            # Streamlit의 전체 1분 Window 상세 조회용
             "window_details": window_details,
 
+            # 사용/지원 공구 범위
             "used_tools": used_tools,
-
             "supported_tools": supported_tools,
-
             "unsupported_tools": unsupported_tools,
-
             "tool_analysis_summary": tool_analysis_summary,
 
             "used_tool_count": detail[

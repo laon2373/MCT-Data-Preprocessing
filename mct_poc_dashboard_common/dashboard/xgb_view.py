@@ -39,10 +39,10 @@ except ImportError:
 
 def render_xgb_view():
     """통합 대시보드 안에서 기존 XGBoost 화면을 렌더링한다."""
-    st.markdown("##### 지도학습 XGBoost 이상 패턴 분석")
+    st.markdown("##### 지도학습 XGBoost 분석")
     st.caption(
-        "가상 이상 시나리오를 학습한 XGBoost로 업로드한 MCT 로그의 "
-        "1분 절삭 Window를 분석합니다."
+        "단일 `.log` 또는 여러 날짜의 `.log`가 들어 있는 `.zip`을 업로드하면 "
+        "저장된 XGBoost 모델로 1분 절삭 Window의 이상 패턴을 분석합니다."
     )
 
     # =========================================================
@@ -65,21 +65,22 @@ def render_xgb_view():
     # 디자인 토큰
     # =========================================================
 
+    # 통합 대시보드의 M2* 화면과 같은 팔레트 사용
     T = {
         "blue": "#3987e5",
-        "aqua": "#18a67e",
-        "orange": "#d97706",
-        "red": "#dc4747",
-        "green": "#27b36a",
-        "yellow": "#e0a21a",
-        "ink": "#f6f7f9",
-        "ink2": "#c9ccd2",
-        "muted": "#8f949e",
-        "grid": "#282a2f",
-        "axis": "#3a3d44",
-        "surface": "#18191b",
-        "surface2": "#202125",
-        "border": "rgba(255,255,255,.09)",
+        "aqua": "#199e70",
+        "orange": "#d95926",
+        "red": "#d03b3b",
+        "green": "#0ca30c",
+        "yellow": "#fab219",
+        "ink": "#ffffff",
+        "ink2": "#c3c2b7",
+        "muted": "#898781",
+        "grid": "#232322",
+        "axis": "#383835",
+        "surface": "#1a1a19",
+        "surface2": "#1a1a19",
+        "border": "rgba(255,255,255,.08)",
     }
 
     FONT = '"Malgun Gothic", "Segoe UI", system-ui, sans-serif'
@@ -99,7 +100,7 @@ def render_xgb_view():
         .block-container {{
             padding-top: 2rem;
             padding-bottom: 4rem;
-            max-width: 1280px;
+            max-width: 1240px;
         }}
 
         h1, h2, h3, h4 {{
@@ -128,7 +129,7 @@ def render_xgb_view():
         }}
 
         .chip {{
-            font-size: .76rem;
+            font-size: .79rem;
             color: {T["ink2"]};
             background: {T["surface"]};
             border: 1px solid {T["border"]};
@@ -139,8 +140,8 @@ def render_xgb_view():
         .section-kicker {{
             color: {T["blue"]};
             font-weight: 800;
-            font-size: .72rem;
-            letter-spacing: .09em;
+            font-size: .70rem;
+            letter-spacing: .07em;
             margin-top: 1.2rem;
             margin-bottom: .2rem;
         }}
@@ -168,22 +169,22 @@ def render_xgb_view():
 
         .kpi {{
             flex: 1 1 0;
-            min-width: 145px;
+            min-width: 118px;
             background: {T["surface"]};
             border: 1px solid {T["border"]};
             border-radius: 12px;
-            padding: 12px 14px 11px;
+            padding: 12px 14px 10px;
         }}
 
         .kpi-label {{
-            font-size: .76rem;
+            font-size: .79rem;
             color: {T["ink2"]};
             margin-bottom: 5px;
         }}
 
         .kpi-value {{
-            font-size: 1.48rem;
-            font-weight: 750;
+            font-size: 1.62rem;
+            font-weight: 600;
             color: {T["ink"]};
             line-height: 1.2;
         }}
@@ -215,7 +216,7 @@ def render_xgb_view():
 
         .panel-title {{
             font-size: .92rem;
-            font-weight: 750;
+            font-weight: 600;
             color: {T["ink"]};
             margin-bottom: 6px;
         }}
@@ -1972,11 +1973,11 @@ def render_xgb_view():
         border=True
     ):
         st.markdown(
-            "##### 분석 데이터 업로드"
+            "##### 지도학습 XGBoost 분석 데이터"
         )
 
         st.caption(
-            "단일 `.log` 파일 또는 여러 날짜의 `.log` 파일이 들어 있는 `.zip` 파일을 업로드하세요."
+            "단일 `.log` 또는 여러 날짜의 `.log`가 들어 있는 `.zip`을 업로드하면 저장된 XGBoost 모델로 분석합니다. 업로드 데이터로 모델을 다시 학습하지 않습니다."
         )
 
         uploaded_file = (
