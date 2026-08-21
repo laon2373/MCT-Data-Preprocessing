@@ -720,7 +720,163 @@ def predict_log(
             score_series = []
 
         # -------------------------------------------------
-        # 6. 업로드 데이터 분석용 요약
+        # 6. 전체 분석 Window 상세 정보
+        # -------------------------------------------------
+        # 기존 top_windows는 "점수가 높은 일부 구간"만 담고 있어
+        # Streamlit 공구 필터가 일부 공구만 보여주는 문제가 있었다.
+        # 따라서 실제 AI 분석이 완료된 모든 Window의 핵심 값을 함께 반환한다.
+
+        window_details = []
+
+        if not supported_df.empty:
+            detail_columns = [
+                "window_start",
+                "window_end",
+                "current_tool",
+                "sample_count",
+                "anomaly_score",
+                "load_vs_normal",
+                "rpm_std_vs_normal",
+                "rpm_error_vs_normal",
+            ]
+
+            available_columns = [
+                column
+                for column in detail_columns
+                if column in supported_df.columns
+            ]
+
+            window_detail_df = (
+                supported_df[available_columns]
+                .dropna(subset=["anomaly_score"])
+                .sort_values("window_start")
+                .copy()
+            )
+
+            for _, row in window_detail_df.iterrows():
+                window_details.append(
+                    {
+                        "window_start": str(row["window_start"]),
+                        "window_end": str(row["window_end"]),
+                        "current_tool": int(row["current_tool"]),
+                        "sample_count": int(row["sample_count"]),
+                        "anomaly_score": float(row["anomaly_score"]),
+                        "load_vs_normal": _to_float(row.get("load_vs_normal")),
+                        "rpm_std_vs_normal": _to_float(row.get("rpm_std_vs_normal")),
+                        "rpm_error_vs_normal": _to_float(row.get("rpm_error_vs_normal")),
+                    }
+                )
+
+        # 공구 목록도 "상위 점수 구간"이 아니라 전체 분석 데이터에서 계산한다.
+        used_tool_values = []
+
+        for frame in [result_df, skipped_df]:
+            if (
+                frame is not None
+                and not frame.empty
+                and "current_tool" in frame.columns
+            ):
+                values = pd.to_numeric(
+                    frame["current_tool"],
+                    errors="coerce",
+                ).dropna()
+
+                used_tool_values.extend(
+                    values.astype(int).tolist()
+                )
+
+        used_tools = sorted(set(used_tool_values))
+
+        if (
+            supported_df is not None
+            and not supported_df.empty
+            and "current_tool" in supported_df.columns
+        ):
+            supported_tools = sorted(
+                pd.to_numeric(
+                    supported_df["current_tool"],
+                    errors="coerce",
+                )
+                .dropna()
+                .astype(int)
+                .unique()
+                .tolist()
+            )
+        else:
+            supported_tools = []
+
+        unsupported_tools = sorted(
+            set(used_tools) - set(supported_tools)
+        )
+
+        # 공구별 AI 분석 가능 범위를 명확히 보여주기 위한 집계
+        tool_analysis_summary = []
+
+        for tool in used_tools:
+            analyzed_count = 0
+            baseline_missing_count = 0
+            insufficient_count = 0
+
+            if (
+                supported_df is not None
+                and not supported_df.empty
+                and "current_tool" in supported_df.columns
+            ):
+                analyzed_count = int(
+                    (
+                        pd.to_numeric(
+                            supported_df["current_tool"],
+                            errors="coerce",
+                        )
+                        == tool
+                    ).sum()
+                )
+
+            if (
+                result_df is not None
+                and not result_df.empty
+                and "current_tool" in result_df.columns
+                and "supported" in result_df.columns
+            ):
+                tool_values = pd.to_numeric(
+                    result_df["current_tool"],
+                    errors="coerce",
+                )
+
+                baseline_missing_count = int(
+                    (
+                        (tool_values == tool)
+                        & (~result_df["supported"].astype(bool))
+                    ).sum()
+                )
+
+            if (
+                skipped_df is not None
+                and not skipped_df.empty
+                and "current_tool" in skipped_df.columns
+            ):
+                insufficient_count = int(
+                    (
+                        pd.to_numeric(
+                            skipped_df["current_tool"],
+                            errors="coerce",
+                        )
+                        == tool
+                    ).sum()
+                )
+
+            tool_analysis_summary.append(
+                {
+                    "tool": int(tool),
+                    "analyzed_windows": analyzed_count,
+                    "baseline_missing_windows": baseline_missing_count,
+                    "insufficient_windows": insufficient_count,
+                    "analysis_supported": analyzed_count > 0,
+                }
+            )
+
+        # -------------------------------------------------
+        # 7. 업로드 데이터 분석용 요약
         # -------------------------------------------------
 
         clean_rows = int(
@@ -807,6 +963,16 @@ def predict_log(
             "top_contributions": top_contributions,
 
             "score_series": score_series,
+
+            "window_details": window_details,
+
+            "used_tools": used_tools,
+
+            "supported_tools": supported_tools,
+
+            "unsupported_tools": unsupported_tools,
+
+            "tool_analysis_summary": tool_analysis_summary,
 
             "used_tool_count": detail[
                 "used_tool_count"
