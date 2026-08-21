@@ -1,201 +1,186 @@
-# MCT Data Preprocessing
-MCT 설비에서 수집된 원본 로그를 분석 가능한 CSV 형태로 변환하고, 데이터 품질을 검증하여 예지보전 분석용 데이터를 생성하는 프로젝트
+# MCT 예지보전 AI 프로젝트
 
-## 목적
-- MCT 원본 로그 구조 분석
-- 날짜·시간 및 수치형 데이터 변환
-- 결측치, 중복값, 수집 간격 및 특이값 검증
-- 알람·비상·RESET·과부하·수집 공백 플래그 생성
-- 설비 좌표를 실제 mm 단위로 변환
-- 최종 분석용 데이터 생성
-- 탐색적 데이터 분석(EDA) 수행
-- 예지보전 모델링에 사용할 데이터 제공
-- 전처리 및 분석 결과 문서화
+MCT 설비 로그를 분석하여 이상 징후를 탐지하는 예지보전 PoC 프로젝트입니다.
 
-## 프로젝트 구조
+비지도학습 **M2\***와 지도학습 **XGBoost**를 함께 구현했으며,  
+사용자는 Streamlit 대시보드에서 `.log` 또는 `.zip` 파일을 업로드하여 분석할 수 있습니다.
+
+---
+
+## 1. 최종 서비스 구조
+
+```text
+사용자
+  ↓
+Streamlit
+  ↓
+FastAPI
+  ├─ /predict/m2  → M2*
+  └─ /predict     → XGBoost
+        ↓
+      분석 결과
+        ↓
+     Streamlit
+```
+
+- **Streamlit**: 사용자 화면, 로그 업로드, 결과 시각화
+- **FastAPI**: 분석 요청 처리
+- **M2\***: 정상 운전조건에서 벗어나는 지속적인 변화 탐지
+- **XGBoost**: 학습한 가상 이상 패턴과 유사한 1분 절삭 Window 분석
+- **모델 비교**: 실제 로그 반응과 동일 합성 이상 실험 결과 비교
+
+> 실제 설비 고장 정답 라벨이 부족하므로 XGBoost의 Anomaly Score를 실제 고장 확률로 해석하지 않습니다.
+
+---
+
+## 2. 실행 방법
+
+프로젝트 최상위 폴더에서 가상환경을 활성화한 뒤 실행합니다.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python run_app.py
+```
+
+`run_app.py`가 다음을 순서대로 실행합니다.
+
+1. FastAPI 실행
+2. `/health` 연결 확인
+3. Streamlit 통합 대시보드 실행
+
+종료할 때는 실행한 터미널에서 `Ctrl + C`를 누릅니다.
+
+---
+
+## 3. 주요 기능
+
+### 비지도학습 M2*
+
+- `.log`, `.zip` 업로드
+- 공통 전처리
+- 저장된 정상 기준을 이용한 추론
+- 이상 알람 확인
+- 신규 운전조건 확인
+- 실시간 관제 형태의 로그 리플레이
+- 운영 리포트
+- 공구별 운전 분석
+
+### 지도학습 XGBoost
+
+- `.log`, `.zip` 업로드
+- 1분 절삭 Window 생성
+- Anomaly Score 계산
+- 점수가 높은 시간대 확인
+- Feature Contribution 확인
+- 공구별 분석 가능 범위 확인
+- PDF 리포트
+
+### 모델 비교
+
+- 공통 전처리 기준 실제 로그 반응 비교
+- 동일 합성 이상 시나리오 비교
+- M2*와 XGBoost의 탐지 특성 비교
+
+실제 로그에는 고장 정답 라벨이 없으므로  
+**탐지 후보가 많다고 더 정확한 모델이라는 의미는 아닙니다.**
+
+---
+
+## 4. 주요 폴더 구조
 
 ```text
 MCT-Data-Preprocessing/
-├── data/                         # 원본 로그 저장 폴더
-├── output/                       # 파싱 및 최종 정제 데이터
-├── reports/                      # 데이터 품질 검증 및 EDA 결과
-│   ├── abnormal_intervals.csv
-│   ├── alarm_counts.csv
-│   ├── daily_counts.csv
-│   ├── interval_summary.csv
-│   ├── machine_counts.csv
-│   ├── missing_counts.csv
-│   ├── numeric_summary.csv
-│   ├── status_counts.csv
-│   └── eda/                      # EDA 결과 저장 폴더
-├── src/
-│   ├── parse_mct_log.py          # 원본 로그 파싱
-│   ├── validate_mct_data.py      # 데이터 품질 검증
-│   ├── build_clean_dataset.py    # 최종 분석용 데이터 생성
-│   └── eda_mct.py                # 탐색적 데이터 분석
-├── .gitignore
-└── README.md
+│
+├─ run_app.py
+├─ api/
+│  └─ main.py
+│
+├─ src/
+│  ├─ inference_pipeline.py
+│  ├─ parse_mct_log.py
+│  ├─ build_clean_dataset.py
+│  ├─ validate_mct_data.py
+│  └─ eda_mct.py
+│
+├─ models/
+│  ├─ xgboost_model.json
+│  ├─ feature_columns.json
+│  └─ train_normal_baseline.csv
+│
+├─ mct_poc_dashboard_common/
+│  └─ dashboard/
+│     ├─ streamlit_integrated.py
+│     ├─ xgb_view.py
+│     ├─ comparison_view.py
+│     ├─ m2_upload_pipeline.py
+│     ├─ pipeline_core.py
+│     ├─ regenerate.py
+│     ├─ data/
+│     ├─ experiments/
+│     └─ reports/
+│
+├─ data/
+│  └─ raw/
+│
+├─ output/
+├─ notebooks/
+├─ reports/
+├─ scripts/
+├─ web_report/
+└─ archive/
 ```
 
-## 데이터 보안
-기업에서 제공받은 원본 데이터와 전처리 결과는 GitHub에 업로드하지 않음.
+---
 
-- `data/`: 기업에서 제공받은 원본 로그
-- `output/`: 전처리 과정에서 생성된 대용량 결과 데이터
+## 5. 데이터 분석 및 실험 자료
 
-위 폴더의 데이터 파일은 `.gitignore`를 통해 Git 추적에서 제외함. 기업 데이터에서 생성된 분석 결과 파일도 필요한 경우 별도로 관리함.
+초기 EDA, 모델 개발 및 검증 과정은 최종 서비스 코드와 별도로 보존합니다.
 
-## 실행 환경
-- Python 3
-- pandas
-- matplotlib
-- seaborn
+- `notebooks/` : EDA, Feature Engineering, 합성 이상 생성, 모델 학습 및 비교
+- `reports/eda/` : EDA 결과
+- `reports/model/` : 지도학습 모델 평가 결과
+- `reports/model_comparison/` : M2* / XGBoost 비교 결과
+- `reports/synthetic/` : 합성 이상 예시
+- `mct_poc_dashboard_common/dashboard/experiments/` : M2* 후보 모델 및 벤치마크 실험
+- `mct_poc_dashboard_common/dashboard/reports/` : M2* 실험 보고서
 
-필요한 라이브러리가 설치되지 않은 경우 다음 명령으로 설치함.
+`archive/`에는 현재 서비스 실행에는 사용하지 않는 구버전/백업 파일을 보관합니다.
 
-```powershell
-pip install pandas matplotlib seaborn
-```
+---
 
-## 실행 방법
-프로젝트 루트 디렉터리에서 다음 순서로 실행함.
+## 6. API
 
-### 1. 원본 로그 파싱
-
-```powershell
-python .\src\parse_mct_log.py
-```
-
-생성 파일:
+FastAPI 기본 주소:
 
 ```text
-output/mct_parsed.csv
+http://127.0.0.1:8000
 ```
 
-### 2. 데이터 품질 검증
-
-```powershell
-python .\src\validate_mct_data.py
-```
-
-생성 결과:
+주요 Endpoint:
 
 ```text
-reports/
+GET  /health
+POST /predict
+POST /predict/m2
 ```
 
-### 3. 최종 분석용 데이터 생성
+- `/predict` : XGBoost 분석
+- `/predict/m2` : M2* 분석
 
-```powershell
-python .\src\build_clean_dataset.py
-```
+---
 
-생성 파일:
+## 7. 모델 해석 주의사항
 
-```text
-output/mct_clean.csv
-```
+현재 데이터에는 실제 고장 라벨이 충분하지 않습니다.
 
-### 4. 탐색적 데이터 분석(EDA)
+따라서 다음 표현은 사용하지 않습니다.
 
-```powershell
-python .\src\eda_mct.py
-```
+- 실제 고장 확률
+- N시간 후 고장 예측
+- 실제 제품 불량 확률
+- 실제 현장 고장 Accuracy
 
-`mct_clean.csv`를 기준으로 데이터 구조, 결측치, 주요 변수의 분포, 이벤트 발생 현황, 정상·이벤트 구간 비교 및 변수 간 상관관계를 분석함.
+XGBoost의 출력은 **Anomaly Score(이상 패턴 점수)**로 해석하며,  
+M2*는 **정상 운전조건에서 벗어나는 정도와 지속성**을 중심으로 해석합니다.
 
-생성 결과:
-
-```text
-reports/eda/
-```
-
-주요 결과 파일:
-
-- `basic_info.csv`: 열 자료형 및 결측치 정보
-- `numeric_summary.csv`: 주요 수치형 변수의 기초 통계
-- `event_summary.csv`: 이벤트별 발생 횟수
-- `daily_event_summary.csv`: 날짜별 이벤트 현황
-- `event_comparison.csv`: 정상 구간과 이벤트 구간 비교
-- `correlation.csv`: 수치형 변수 간 상관관계
-- `.png` 파일: 변수 분포, 이벤트 비교 및 상관관계 그래프
-
-## 품질 검증 결과
-총 481,648행을 검증한 결과는 다음과 같음.
-
-- 파싱 후 행 수: 481,648행
-- 최종 데이터 행 수: 481,648행
-- 완전 중복 행: 0건
-- 시간 변환 실패: 0건
-- 알람 발생: 16행
-- 실제 비상 상태 발생: 0행
-- RESET 상태 발생: 4행
-- 스핀들 부하 100% 초과: 60행
-- 수집 간격 15초 초과 또는 0초 이하: 17행
-- 최종 관심 관측치: 97행
-
-`error_message`는 알람이 없는 481,632행에서 비어 있으며, 이는 오류 메시지가 존재하지 않는 정상적인 결측임. `interval_seconds`는 각 설비의 첫 번째 관측치에서 이전 측정값이 없어 결측으로 기록됨.
-
-## 처리 원칙
-특이값을 임의로 삭제하거나 수정하지 않고 원본 관측치를 보존함. 분석과 모델링에 필요한 변환 열 및 상태 플래그를 최종 데이터에 추가함.
-
-| 열 이름 | 의미 |
-|---|---|
-| `x_axis_mm`, `y_axis_mm`, `z_axis_mm` | 스케일 팩터 10000을 적용한 mm 단위 좌표 |
-| `interval_seconds` | 같은 설비의 이전 관측치와의 시간 차이 |
-| `is_alarm` | 알람 코드 발생 여부 |
-| `is_emergency` | 실제 비상 상태 코드 1 여부 |
-| `is_reset` | RESET 상태 코드 2 여부 |
-| `is_spindle_overload` | 스핀들 부하 100% 초과 여부 |
-| `is_abnormal_interval` | 수집 간격 15초 초과 여부 |
-| `has_event` | 하나 이상의 관심 조건 해당 여부 |
-
-원본 X·Y·Z 좌표에는 스케일 팩터 10000이 적용되어 있음. 원본 좌표를 추적·검증용으로 보존하면서 실제 mm 단위로 변환한 `x_axis_mm`, `y_axis_mm`, `z_axis_mm` 열을 최종 데이터에 추가함.
-
-`emergency` 상태 코드는 0(비상 아님), 1(실제 비상), 2(RESET)로 구분하여 처리함. 데이터에서 확인된 코드 2의 4개 행은 실제 비상이 아닌 RESET 상태임.
-
-`aut_mode`, `emergency`, 스핀들 부하 100% 초과 값은 파싱 오류로 확정할 근거가 없어 원본값을 그대로 보존하고 별도의 분석용 플래그로 구분함.
-
-X·Y·Z축 부하값은 전체 행에서 동일하지만, 원본 로그 대조 결과에서도 같은 값으로 기록되어 있어 파싱 오류가 아닌 원천 데이터의 특성으로 판단함.
-
-## EDA 수행 범위
-EDA에서는 다음 항목을 확인함.
-
-- 데이터 행·열 구조 및 자료형
-- 열별 결측치 현황
-- 주요 수치형 변수의 최솟값·최댓값·평균·중앙값
-- 알람·비상·RESET·과부하·비정상 수집 간격 발생 현황
-- 날짜별 데이터 및 이벤트 발생 추이
-- 정상 구간과 이벤트 구간의 주요 변수 비교
-- 수치형 변수 간 상관관계
-- 모델 학습에 사용할 수 있는 후보 변수
-
-`has_event`는 실제 고장 여부를 나타내는 정답 라벨이 아니라, 알람·RESET·과부하·수집 공백 등 분석할 필요가 있는 행을 표시하는 보조 플래그임. 따라서 실제 고장 예측 모델을 학습하려면 별도의 고장·정비 이력이 필요함.
-
-## EDA 주요 결과
-- 전체 481,648행 중 `has_event=True`인 관심 관측치는 97행으로, 전체의 약 0.02%임
-- `spindle_rate`와 `spindle_load`의 상관계수는 약 0.95로 높은 양의 상관관계를 보임
-- `spindle_rate`와 `z_axis_mm`의 상관계수는 약 -0.92로 높은 음의 상관관계를 보임
-- `x_axis_mm`와 `y_axis_mm`의 상관계수는 약 0.75로 비교적 높은 양의 상관관계를 보임
-- `delta_spindle_rpm`은 전체 관측치의 대부분에서 0이지만 일부 큰 값이 존재하며, 이벤트 여부에 따라 분포 차이가 나타남
-- 이벤트 관측치의 `spindle_load` 중앙값은 105로, 비이벤트 관측치의 중앙값 0보다 높게 나타남
-- 다만 스핀들 과부하 조건이 `has_event` 정의에 포함되어 있으므로, `spindle_load`의 차이는 이벤트 정의의 영향을 받은 결과임
-- 이벤트 관측치의 `feed_rate` 평균은 약 245로 비이벤트 관측치의 약 657보다 낮았지만, 두 그룹의 중앙값은 모두 0이었음
-- 이벤트 관측치의 `spindle_rate` 평균은 약 4,809로 비이벤트 관측치의 약 7,272보다 낮았지만, 중앙값은 각각 2,012와 0으로 나타나 평균과 중앙값의 비교 결과가 달랐음
-- `has_event`는 알람·RESET·스핀들 과부하·비정상 수집 간격을 합친 규칙 기반 보조 플래그이며, 실제 설비 고장 라벨을 의미하지 않음
-- 상관관계와 그룹별 분포 차이는 변수 간 인과관계를 의미하지 않으며, 운전 상태와 가공 위치 등의 영향을 함께 받을 수 있음
-
-## 진행 상태
-- [v] GitHub 저장소 및 프로젝트 구조 생성
-- [v] 원본 및 결과 데이터 Git 추적 제외
-- [v] 원본 로그 구조 분석
-- [v] 원본 로그 파싱
-- [v] 결측치·중복값·특이값 점검
-- [v] 원본 로그와 파싱 결과 대조
-- [v] 데이터 품질 검증 보고서 생성
-- [v] 최종 분석용 데이터 생성
-- [v] 전처리 결과 검증
-- [v] EDA 코드 작성
-- [v] 주요 변수 분포 및 이벤트 현황 분석
-- [v] 정상 구간과 이벤트 구간 비교
-- [v] 수치형 변수 상관관계 분석
+실제 고장 라벨이 확보되면 두 모델의 현장 성능을 다시 검증해야 합니다.
