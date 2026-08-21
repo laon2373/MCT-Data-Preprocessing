@@ -1,0 +1,3 @@
+﻿비교 기준,XGBoost 기준,XGBoost Episode,M2* Episode,XGBoost 중 겹침,M2* 중 겹침
+XGBoost calibration P99,0.12394253864884464,53,14,8,6
+XGBoost Score >= 0.9,0.9,6,14,1,1
